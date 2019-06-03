@@ -112,4 +112,4 @@ boxplot(winenorm[, c(4, 6, 7, 8,11)], range=0.0, horizontal=TRUE,
 #    goem_jitter
 
 
-ggplot(col_den1, aes(x=value)) + geom_density(aes(group=factor))
+# ggplot(col_den1, aes(x=value)) + geom_density(aes(group=factor))
