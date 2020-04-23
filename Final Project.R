@@ -2,7 +2,7 @@
 library(tidyverse)
 
 # Read in file and rename columns
-setwd("~/Documents/JWU/Spring_2020/DATA5500 - Time Series Analysis/Project")
+setwd()
 santd <- read.csv('train_ver2_0.csv', header = TRUE, sep = ',', stringsAsFactors = FALSE)
 s_colname <- read.csv('santander_column_desc.csv', header = TRUE, sep = ',', 
                       stringsAsFactors = FALSE)
