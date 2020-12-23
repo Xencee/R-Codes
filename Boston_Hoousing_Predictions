@@ -1,0 +1,210 @@
+---
+title: "Boston Housing: Predicting the median value of owner-occupied homes"
+output: html_notebook
+---
+
+This analysis is focused on data from the real estate industry in Boston (US). The task is to build a machine learning model to predict the median value (MEDV) of owner-occupied homes. The data contains 14 attributes, and the target variable MEDV records value of home in 1000 USD's. This project was is sourced from the Boston Housing challenge on DPhi available here: https://dphi.tech/practice/challenge/1#data.
+
+```{r}
+
+#Load libraries
+library(readr)
+library(funModeling)
+library(skimr)
+library(Hmisc)
+library(GGally)
+library(caret)
+library(gridExtra)
+library(xgboost)
+library(DiagrammeR)
+```
+
+# Data Description
+
+CRIM: per capita crime rate by town
+ZN: proportion of residential land zoned for lots over 25,000 sq.ft.
+INDUS: proportion of non-retail business acres per town
+CHAS: Charles River dummy variable (= 1 if tract bounds river; 0 otherwise)
+NOX: nitric oxides concentration (parts per 10 million)
+RM: average number of rooms per dwelling
+AGE: proportion of owner-occupied units built prior to 1940
+DIS: weighted distances to five Boston employment centres
+RAD: index of accessibility to radial highways
+TAX: full-value property-tax rate per 10,000 USD
+PTRATIO: pupil-teacher ratio by town
+B: 1000(Bk - 0.63)^2 where Bk is the proportion of blacks by town
+LSTAT: lower status of the population (%)
+MEDV: Median value of owner-occupied homes in 1000 USD's
+```{r}
+#Read data file
+boston_housing <- read_csv("https://raw.githubusercontent.com/dphi-official/Datasets/master/Boston_Housing/Training_set_boston.csv" )
+head(boston_housing)
+```
+# Exploratory Data Analysis
+## Data Profiling
+
+```{r}
+#Create exploratory data analysis function
+eda <- function(x){
+  summary(x)
+  df_status(x)
+  profiling_num(x)
+  freq(x) 
+  plot_num(x)
+}
+
+#Apply function to dataset
+eda(boston_housing)
+
+#View distribution of target variable
+boston_housing[which.min(boston_housing$MEDV), ]
+boston_housing[which.max(boston_housing$MEDV), ]
+plot(density(boston_housing$MEDV))
+polygon(density(boston_housing$MEDV), col="grey", border="red")
+
+
+```
+The density chart does not indicate a normal distribution in the dependent variable. Rather it shows that the data a slight skew to the left which means the mean (in this case 22.8) will likely be higher than the median (in this case 21.6). Further investigation shows that the standard deviation (9.33) is relatively large meaning that many of the values are spread apart away from the mean. next it is important to identify any correlations in the variables.
+
+## Testing Correlations
+```{r}
+
+#Create correlation chart
+ggcorr(boston_housing)
+```
+```{r}
+#Create correlation table
+correlation_table(boston_housing, 'MEDV')
+```
+Two variables are highly correlated with the target variable, RM (positive), LSTAT (negative). It is worth it to explore these further.
+
+```{r}
+#Investigate the highly correlated variables
+LSTAT <- ggplot(boston_housing, aes(x = MEDV, y = LSTAT)) + geom_point() + geom_abline() + theme_minimal()
+RM <- ggplot(boston_housing, aes(x = MEDV, y = RM)) + geom_point() + geom_abline() + theme_minimal()
+LSTAT_RM <- ggplot(boston_housing, aes(x = LSTAT, y = RM)) + geom_point() + geom_abline() + theme_minimal()
+grid.arrange(LSTAT, RM, LSTAT_RM, ncol = 3)
+
+#Testing correlation between the two highest correlated variables
+paste('LSTAT & RM cor:', round(cor(boston_housing$RM, boston_housing$LSTAT),2))
+
+#Calculate linear correlation for the two variables
+test <- data.frame(boston_housing$LSTAT, boston_housing$MEDV)
+paste('R2 LSTAT~MEDV:', round(cor(test)[1,2]^2, 2))
+boston_mine <- mine(test)
+paste('LSTAT~MEDV MIC:', round(boston_mine$MIC[1,2], 2))
+
+test1 <- data.frame(boston_housing$RM, boston_housing$MEDV)
+paste('R2 LSTAT~MEDV:', round(cor(test1)[1,2]^2, 2))
+boston_mine1 <- mine(test1)
+paste('RM~MEDV MIC:', round(boston_mine1$MIC[1,2],2))
+```
+```{r}
+#Partition data 
+set.seed(123)
+smp_size <- createDataPartition(y = boston_housing$MEDV, p = 0.7, list = FALSE)
+train <-boston_housing[smp_size, ]
+test <- boston_housing[-smp_size, ]
+
+# Standardize data
+scaled_train <- data.frame(scale(train))
+scaled_test <- data.frame(scale(test))
+
+#Run linear algorithm
+lm_train <- lm(MEDV ~ ., data = train)
+summary(lm_train)
+
+# Check that mean and standard deviation are 0 and 1
+apply(scaled_train, 2, mean)  
+apply(scaled_train, 2, sd)
+
+# Apply linear algorithm to scaled data
+lm_scaled_train <- lm(MEDV ~ ., data = scaled_train)
+summary(lm_scaled_train)
+
+# Find variable importance rank for use in new model
+varImp(lm_scaled_train)
+
+# Fit model with variables having importance>1
+lm_imp_train <- lm(MEDV ~ CRIM + ZN + CHAS + NOX + RM + DIS + RAD + TAX + PTRATIO + B + LSTAT,
+                   data = scaled_train)
+summary(lm_imp_train)
+
+# Compare the two scaled models
+anova(lm_imp_train, lm_scaled_train)
+```
+The linear algorithm produced an adjusted R2 of 72% and although the same algorithm was applied to a standardized version of the data, the accuracy was the same but the residual standar error fell from 4.98 (unscaled data) to about 0.53 (scaled data). The adjusted R2 which penalizes a model for using too many variables decreases when a predictor improves the model by less than expected by chance. This means that since the difference between the R2 and adjusted R2 is 0.0127, using all the variables in the model does not seem to affect the accuracy adversely or otherwise. However, given the slight improvement in accuracy in the scaled data model, that model will be the focus of the linear modeling part of this exercise. 
+
+An attempt was then made to identify the most important variable in the data and fit a model with those with an importance over 1. The resulting model summary shows an improvement in the f-statistic; an ANOVA test is then used to determine the more significant model. From the non-significant p-value of 0.998, it would appear that the initial premise of the variables not affecting the performance of the model adversely was correct. Next, an xgboost model will be applied to the data to determine if the accuracy can be improved since this algorithm is considered more efficient, accurate and feasible than many others available.
+
+```{r}
+# Run cross validation on data
+cv_xgboost <- xgb.cv(data = as.matrix(scaled_train[1:12]), 
+             label = scaled_train$MEDV,
+             nrounds = 100,
+             nfold = 10,
+             objective = "reg:squarederror",
+             eta = 0.1,
+             max_depth = 6,
+             early_stopping_rounds = 10,
+             verbose = 0   # silent
+)
+
+# Determine and print how many trees minimize training and test error
+cv_xgboost$evaluation_log %>%
+  dplyr::summarise(
+    ntrees.train = which(train_rmse_mean == min(train_rmse_mean))[1],
+    rmse.train   = min(train_rmse_mean),
+    ntrees.test  = which(test_rmse_mean == min(test_rmse_mean))[1],
+    rmse.test   = min(test_rmse_mean),
+  )
+
+
+# plot error vs number trees
+ggplot(cv_xgboost$evaluation_log) +
+  geom_line(aes(iter, train_rmse_mean), color = "red") +
+  geom_line(aes(iter, test_rmse_mean), color = "blue")
+
+
+# Plot predictions vs actual bike rental count
+ggplot(scaled_test, aes(x = pred, y = MEDV)) + 
+  geom_point() + 
+  geom_abline()
+
+ntrees <- 79
+
+# Run xgboost
+model_xgb <- xgboost(data = as.matrix(scaled_train[1:12]), # training data as matrix
+                          label = scaled_train$MEDV,  # column of outcomes
+                          nrounds = ntrees,       # number of trees to build
+                          objective = "reg:squarederror", # objective
+                          eta = 0.001,
+                          depth = 10,
+                          verbose = 0  # silent
+)
+
+# Make predictions
+scaled_test$pred <- predict(model_xgb, as.matrix(scaled_test[1:12]))
+
+# Plot error vs number trees
+ggplot(xgb.fit1$evaluation_log) +
+  geom_line(aes(iter, train_rmse_mean), color = "red") +
+  geom_line(aes(iter, test_rmse_mean), color = "blue")
+
+# Calculate RMSE
+scaled_test %>%
+  mutate(residuals = y - pred) %>%
+  summarize(rmse = sqrt(mean(residuals^2)))
+
+# Train xgboost model on scaled data
+xgboost_scaled_train <- xgboost(data = as.matrix(train[1:12]), label = train$MEDV, max_depth = 4, 
+                                eta = 0.5, nrounds = 3, objective = "reg:squarederror", verbose = 2)
+
+# View classification tree
+xgb.plot.tree(model = xgboost_scaled_train)
+
+# Predict class on test data
+predictions <- predict(xgboost_scaled_train, as.matrix(test[1:12]))
+xgboost_test_predictions <- as.data.frame(cbind(round(predictions, 2), test$MEDV))
+```
+
